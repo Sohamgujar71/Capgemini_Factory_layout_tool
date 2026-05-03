@@ -49,10 +49,10 @@ function getAreaBoundaryWorkcenters(factory: any) {
     
     // Sort by wsSequence, fallback to id if sequence not available
     workCenters.sort((a, b) => {
-      if (a.wsSequence !== undefined && b.wsSequence !== undefined) {
+      if (a.wsSequence !== undefined && b.wsSequence !== undefined && a.wsSequence !== 0 && b.wsSequence !== 0) {
         return a.wsSequence - b.wsSequence;
       }
-      return parseInt(a.id) - parseInt(b.id);
+      return parseInt((a.id || '').replace(/\D/g, '') || '0') - parseInt((b.id || '').replace(/\D/g, '') || '0');
     });
     
     areaBoundaries.push({
@@ -284,8 +284,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
 
             ctx.beginPath();
             ctx.moveTo(arrowX, arrowY);
-            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(arrowX - 42 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 42 * zoom * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(arrowX - 42 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 42 * zoom * Math.sin(angle + Math.PI / 6));
             ctx.fillStyle = '#f59e0b';
             ctx.fill();
 
@@ -310,13 +310,72 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             const fromWC = currentArea.last;
             const toWC = nextArea.first;
             
-            const fx = (fromWC.x + fromWC.width / 2) * zoom + panX;
-            const fy = (fromWC.y + fromWC.height / 2) * zoom + panY;
-            const tx = (toWC.x + toWC.width / 2) * zoom + panX;
-            const ty = (toWC.y + toWC.height / 2) * zoom + panY;
+            const fromCX = (fromWC.x + fromWC.width / 2) * zoom + panX;
+            const fromCY = (fromWC.y + fromWC.height / 2) * zoom + panY;
+            const toCX = (toWC.x + toWC.width / 2) * zoom + panX;
+            const toCY = (toWC.y + toWC.height / 2) * zoom + panY;
+
+            let fx, fy, tx, ty;
+            let p1x, p1y, p2x, p2y;
+            let angle;
+
+            // Use horizontal routing only if it's primarily horizontal AND they are on the same vertical "row"
+            if (Math.abs(toCY - fromCY) < Math.abs(toCX - fromCX) && Math.abs(toCY - fromCY) < 400 * zoom) {
+              // Horizontal dominant routing (e.g. W9 -> W10)
+              if (toCX > fromCX) {
+                fx = (fromWC.x + fromWC.width) * zoom + panX; // Right
+                fy = fromCY;
+                tx = toWC.x * zoom + panX; // Left
+                ty = toCY;
+                angle = 0;
+              } else {
+                fx = fromWC.x * zoom + panX; // Left
+                fy = fromCY;
+                tx = (toWC.x + toWC.width) * zoom + panX; // Right
+                ty = toCY;
+                angle = Math.PI;
+              }
+              const cx = fx + (tx - fx) / 2;
+              p1x = cx; p1y = fy;
+              p2x = cx; p2y = ty;
+            } else {
+              // Vertical dominant routing (e.g. W18 -> W19)
+              const currentAreaBox = currentArea.area;
+              const areaBottomY = (currentAreaBox.y + currentAreaBox.height) * zoom + panY;
+              
+              if (toCY > fromCY) {
+                fx = fromCX;
+                fy = (fromWC.y + fromWC.height) * zoom + panY; // Bottom
+                tx = toCX;
+                ty = toWC.y * zoom + panY; // Top
+                angle = Math.PI / 2;
+                
+                // Route outside the box neatly
+                // Place the horizontal line halfway between the bottom of the area box and the target WC
+                const paddingBelowBox = 40 * zoom;
+                const minCy = areaBottomY + paddingBelowBox;
+                const defaultCy = fy + (ty - fy) / 2;
+                const cy = Math.max(defaultCy, minCy);
+                
+                p1x = fx; p1y = cy;
+                p2x = tx; p2y = cy;
+              } else {
+                fx = fromCX;
+                fy = fromWC.y * zoom + panY; // Top
+                tx = toCX;
+                ty = (toWC.y + toWC.height) * zoom + panY; // Bottom
+                angle = -Math.PI / 2;
+                
+                const cy = fy + (ty - fy) / 2;
+                p1x = fx; p1y = cy;
+                p2x = tx; p2y = cy;
+              }
+            }
 
             ctx.beginPath();
             ctx.moveTo(fx, fy);
+            ctx.lineTo(p1x, p1y);
+            ctx.lineTo(p2x, p2y);
             ctx.lineTo(tx, ty);
             ctx.strokeStyle = '#ef4444'; // Red for inter-area connections
             ctx.lineWidth = 3.5 * zoom;
@@ -326,15 +385,13 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             ctx.setLineDash([]);
 
             // Red Arrow Head
-            const angle = Math.atan2(ty - fy, tx - fx);
-            const ptRadius = Math.max(toWC.width / 2, toWC.height / 2) * zoom + (5 * zoom);
-            const arrowX = tx - Math.cos(angle) * ptRadius;
-            const arrowY = ty - Math.sin(angle) * ptRadius;
+            const arrowX = tx;
+            const arrowY = ty; // Sharp connection
 
             ctx.beginPath();
             ctx.moveTo(arrowX, arrowY);
-            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(arrowX - 52 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 52 * zoom * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(arrowX - 52 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 52 * zoom * Math.sin(angle + Math.PI / 6));
             ctx.fillStyle = '#ef4444';
             ctx.fill();
           }
