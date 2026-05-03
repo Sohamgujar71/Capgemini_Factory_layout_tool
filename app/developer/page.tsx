@@ -30,10 +30,9 @@ export default function DeveloperPage() {
 
     const passToAdmin = async (id: string) => {
         try {
-            await fetch(`/api/layouts/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: 'pending' })
+            await fetch(`/api/layouts/${id}/pass-to-admin`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
             });
             fetchLayouts();
             setPassedMsg(true);
@@ -240,15 +239,24 @@ export default function DeveloperPage() {
                                                 <span className="px-2 py-1 text-xs font-medium bg-slate-100 text-slate-600 rounded-full">Draft</span>
                                             ) : l.status === 'pending' ? (
                                                 <span className="px-2 py-1 text-xs font-medium bg-amber-100 text-amber-700 rounded-full">Pending Admin</span>
-                                            ) : l.isActive ? (
-                                                <span className="px-2 py-1 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full">Active</span>
+                                            ) : l.status === 'rejected' ? (
+                                                <div className="flex flex-col gap-1">
+                                                    <span className="inline-block px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full w-fit">Rejected</span>
+                                                    {l.adminComments && (
+                                                        <div className="text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 mt-1">
+                                                            <strong>Admin Comment:</strong> {l.adminComments}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : l.isActive || l.status === 'approved' ? (
+                                                <span className="px-2 py-1 text-xs font-medium bg-emerald-100 text-emerald-700 rounded-full">Admin Approved</span>
                                             ) : (
-                                                <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">Admin Approved</span>
+                                                <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">{l.status}</span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm align-top">
                                             <div className="flex justify-end gap-2 text-slate-900">
-                                                {(!l.status || l.status === 'draft') && (
+                                                {(!l.status || l.status === 'draft' || l.status === 'rejected') && (
                                                     <>
                                                         <Link href={`/admin/editor?id=${l.id}`}>
                                                             <Button variant="outline" size="sm" className="text-slate-900 hover:text-slate-900 border-slate-200 hover:bg-slate-100">
@@ -260,7 +268,7 @@ export default function DeveloperPage() {
                                                             size="sm" 
                                                             className="bg-indigo-600 hover:bg-indigo-700 text-white"
                                                         >
-                                                            Pass to Admin
+                                                            {l.status === 'rejected' ? 'Re-Submit' : 'Pass to Admin'}
                                                         </Button>
                                                     </>
                                                 )}

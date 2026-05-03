@@ -44,13 +44,13 @@ export default function AdminPage() {
     }
   };
 
-  const handleActivate = async (id: string) => {
+  const handleApprove = async (id: string) => {
     setLoading(true);
     try {
-      await fetch('/api/layouts/active', {
+      await fetch(`/api/layouts/${id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ reviewedBy: user?.username || 'Admin' }),
       });
       await fetchLayouts();
     } finally {
@@ -59,10 +59,38 @@ export default function AdminPage() {
   };
 
   const handleReject = async (id: string) => {
+    const comment = prompt("Please enter a reason for rejection (this will be sent to the developer):");
+    if (comment === null) return; // User cancelled
+
     setLoading(true);
     try {
-      await fetch(`/api/layouts/${id}`, {
-        method: 'DELETE',
+      await fetch(`/api/layouts/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewedBy: user?.username || 'Admin' }),
+      });
+      
+      if (comment) {
+        await fetch(`/api/layouts/${id}/comment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adminComments: comment, reviewedBy: user?.username || 'Admin' }),
+        });
+      }
+      
+      await fetchLayouts();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleActivate = async (id: string) => {
+    setLoading(true);
+    try {
+      await fetch('/api/layouts/active', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
       });
       await fetchLayouts();
     } finally {
@@ -180,7 +208,15 @@ export default function AdminPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {layout.isActive ? (
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            <CheckCircle className="w-3 h-3 mr-1" /> Active
+                            <CheckCircle className="w-3 h-3 mr-1" /> Live
+                          </span>
+                        ) : layout.status === 'approved' ? (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                            Approved
+                          </span>
+                        ) : layout.status === 'rejected' ? (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
+                            Rejected
                           </span>
                         ) : layout.status === 'pending' ? (
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
@@ -193,25 +229,37 @@ export default function AdminPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        {!layout.isActive && (
+                        {layout.status === 'pending' && (
                           <div className="flex justify-end gap-3">
                             <Button
-                              onClick={() => handleActivate(layout.id)}
+                              onClick={() => handleApprove(layout.id)}
                               disabled={loading}
-                              className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 h-9 w-9 p-0 rounded-full flex items-center justify-center transition-colors"
+                              className="bg-blue-100 hover:bg-blue-200 text-blue-700 h-9 px-3 rounded-md flex items-center justify-center transition-colors"
                               title="Approve this layout version"
                             >
-                              <Check className="h-5 w-5" />
+                              <Check className="h-4 w-4 mr-1" /> Approve
                             </Button>
                             <Button
                               onClick={() => handleReject(layout.id)}
                               disabled={loading}
-                              className="bg-rose-100 hover:bg-rose-200 text-rose-700 h-9 w-9 p-0 rounded-full flex items-center justify-center transition-colors"
+                              className="bg-rose-100 hover:bg-rose-200 text-rose-700 h-9 px-3 rounded-md flex items-center justify-center transition-colors"
                               title="Reject this layout version"
                             >
-                              <X className="h-5 w-5" />
+                              <X className="h-4 w-4 mr-1" /> Reject & Comment
                             </Button>
                           </div>
+                        )}
+                        {layout.status === 'approved' && !layout.isActive && (
+                           <div className="flex justify-end gap-3">
+                            <Button
+                              onClick={() => handleActivate(layout.id)}
+                              disabled={loading}
+                              className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 h-9 px-3 rounded-md flex items-center justify-center transition-colors"
+                              title="Make this layout live"
+                            >
+                              <Factory className="h-4 w-4 mr-1" /> Make Live
+                            </Button>
+                           </div>
                         )}
                         {layout.isActive && (
                           <span className="text-xs text-emerald-600 font-medium px-3">Live on Dashboard</span>

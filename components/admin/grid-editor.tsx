@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, Grid3x3, RotateCcw, Save, ArrowLeft, Move, X, Upload, Download, ChevronRight, ChevronDown, AlignJustify, LayoutGrid, MessageSquare } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, Grid3x3, RotateCcw, Save, ArrowLeft, Move, X, Upload, Download, ChevronRight, ChevronDown, AlignJustify, LayoutGrid, MessageSquare, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { defaultFactory } from '@/lib/boilerplate-data';
 
@@ -29,6 +29,40 @@ function roundRect(
   ctx.arcTo(x, y + height, x, y, radius);
   ctx.arcTo(x, y, x + width, y, radius);
   ctx.closePath();
+}
+
+// Helper: Get first and last workstations per area based on wsSequence
+function getAreaBoundaryWorkcenters(factory: any) {
+  if (!factory?.areas) return [];
+  
+  const areaBoundaries: { area: any; first: any; last: any }[] = [];
+  
+  factory.areas.forEach((area: any) => {
+    const workCenters: any[] = [];
+    area.lines?.forEach((line: any) => {
+      line.workCenters?.forEach((wc: any) => {
+        workCenters.push({ ...wc, areaId: area.id });
+      });
+    });
+    
+    if (workCenters.length === 0) return;
+    
+    // Sort by wsSequence, fallback to id if sequence not available
+    workCenters.sort((a, b) => {
+      if (a.wsSequence !== undefined && b.wsSequence !== undefined) {
+        return a.wsSequence - b.wsSequence;
+      }
+      return parseInt(a.id) - parseInt(b.id);
+    });
+    
+    areaBoundaries.push({
+      area,
+      first: workCenters[0],
+      last: workCenters[workCenters.length - 1]
+    });
+  });
+  
+  return areaBoundaries;
 }
 
 export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEditorProps) {
@@ -85,6 +119,23 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     };
     animationFrameRef.current = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrameRef.current!);
+  }, []);
+
+  // Handle ResizeObserver to prevent canvas stretching
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!container || !canvas) return;
+
+    const observer = new ResizeObserver(entries => {
+      for (let entry of entries) {
+        canvas.width = entry.contentRect.width;
+        canvas.height = entry.contentRect.height;
+      }
+    });
+
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
   // Rendering — mirrors dashboard drawing style exactly
@@ -233,8 +284,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
 
             ctx.beginPath();
             ctx.moveTo(arrowX, arrowY);
-            ctx.lineTo(arrowX - 12 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 12 * zoom * Math.sin(angle - Math.PI / 6));
-            ctx.lineTo(arrowX - 12 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 12 * zoom * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle + Math.PI / 6));
             ctx.fillStyle = '#f59e0b';
             ctx.fill();
 
@@ -246,6 +297,48 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             }
           }
         });
+      }
+
+      // Draw Inter-Area Flows (Red arrows connecting last workstation of area N to first of area N+1)
+      const areaBoundaries = getAreaBoundaryWorkcenters(factory);
+      if (areaBoundaries.length > 1) {
+        for (let i = 0; i < areaBoundaries.length - 1; i++) {
+          const currentArea = areaBoundaries[i];
+          const nextArea = areaBoundaries[i + 1];
+          
+          if (currentArea.last && nextArea.first) {
+            const fromWC = currentArea.last;
+            const toWC = nextArea.first;
+            
+            const fx = (fromWC.x + fromWC.width / 2) * zoom + panX;
+            const fy = (fromWC.y + fromWC.height / 2) * zoom + panY;
+            const tx = (toWC.x + toWC.width / 2) * zoom + panX;
+            const ty = (toWC.y + toWC.height / 2) * zoom + panY;
+
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.lineTo(tx, ty);
+            ctx.strokeStyle = '#ef4444'; // Red for inter-area connections
+            ctx.lineWidth = 3.5 * zoom;
+            ctx.setLineDash([12 * zoom, 8 * zoom]);
+            ctx.lineDashOffset = -viewState.time * 25 * zoom;
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Red Arrow Head
+            const angle = Math.atan2(ty - fy, tx - fx);
+            const ptRadius = Math.max(toWC.width / 2, toWC.height / 2) * zoom + (5 * zoom);
+            const arrowX = tx - Math.cos(angle) * ptRadius;
+            const arrowY = ty - Math.sin(angle) * ptRadius;
+
+            ctx.beginPath();
+            ctx.moveTo(arrowX, arrowY);
+            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle - Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(arrowX - 18 * zoom * Math.cos(angle + Math.PI / 6), arrowY - 18 * zoom * Math.sin(angle + Math.PI / 6));
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+          }
+        }
       }
 
       // Level of Detail — show details when zoomed in
@@ -333,25 +426,6 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     });
   }, [factory, viewState, hoveredEntity, selectedAreaId, showGrid]);
 
-  // Helpers: focus on area (same logic as dashboard)
-  const focusOnArea = useCallback((area: any) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const padding = 80;
-    const scaleX = (canvas.width - padding * 2) / area.width;
-    const scaleY = (canvas.height - padding * 2) / area.height;
-    const targetZoom = Math.min(scaleX, scaleY, 2.0);
-    const areaCenterX = area.x + area.width / 2;
-    const areaCenterY = area.y + area.height / 2;
-    setSelectedAreaId(area.id);
-    setViewState(prev => ({
-      ...prev,
-      targetZoom,
-      targetPanX: canvas.width / 2 - areaCenterX * targetZoom,
-      targetPanY: canvas.height / 2 - areaCenterY * targetZoom,
-    }));
-  }, []);
-
   const resetView = useCallback(() => {
     setSelectedAreaId(null);
     setViewState(prev => ({ ...prev, targetZoom: 0.35, targetPanX: 60, targetPanY: 60 }));
@@ -364,13 +438,25 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     const scaleX = (canvas.width - padding * 2) / factory.width;
     const scaleY = (canvas.height - padding * 2) / factory.height;
     const targetZoom = Math.min(scaleX, scaleY, 2.0);
+    
+    const contentWidth = factory.width * targetZoom;
+    const contentHeight = factory.height * targetZoom;
+    
     setViewState(prev => ({
       ...prev,
       targetZoom,
-      targetPanX: padding,
-      targetPanY: padding,
+      targetPanX: (canvas.width - contentWidth) / 2,
+      targetPanY: (canvas.height - contentHeight) / 2,
     }));
   }, [factory]);
+
+  // Fit to screen on initial load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+       handleFitToScreen();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [factory, handleFitToScreen]);
 
   // Canvas interactions
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -395,7 +481,13 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
       });
     });
 
-    if (foundMachine && !isAdmin) {
+    if (isAdmin) {
+      // Prevent all interaction except zooming
+      e.preventDefault();
+      return;
+    }
+
+    if (foundMachine) {
       setDraggingMachine(foundMachine);
       e.preventDefault();
       return;
@@ -564,14 +656,9 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         });
 
         if (hitArea) {
-          if (selectedAreaId === hitArea.id) {
-            // Double-click effect: zoom in
-            resetView();
-          } else {
-            focusOnArea(hitArea);
-          }
+          setSelectedAreaId(hitArea.id === selectedAreaId ? null : hitArea.id);
         } else {
-          resetView();
+          setSelectedAreaId(null);
         }
       }
     }
@@ -592,9 +679,29 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
     const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    const newZoom = Math.max(0.1, Math.min(3.0, viewState.targetZoom + delta));
-    setViewState(prev => ({ ...prev, targetZoom: newZoom }));
+    const oldZoom = viewState.targetZoom;
+    const newZoom = Math.max(0.1, Math.min(3.0, oldZoom + delta));
+    
+    // Zoom toward center of canvas
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    const factoryX = (cx - viewState.targetPanX) / oldZoom;
+    const factoryY = (cy - viewState.targetPanY) / oldZoom;
+
+    const newPanX = cx - factoryX * newZoom;
+    const newPanY = cy - factoryY * newZoom;
+
+    setViewState(prev => ({ 
+      ...prev, 
+      targetZoom: newZoom,
+      targetPanX: newPanX,
+      targetPanY: newPanY
+    }));
   };
 
   const handleSave = () => {
@@ -634,6 +741,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
 
         const wId = parts[22];
         const wName = parts[23];
+        const wSeq = parseInt(parts[24]) || 0;
         const wX = parseFloat(parts[25]);
         const wY = parseFloat(parts[26]);
         const wW = parseFloat(parts[27]);
@@ -660,6 +768,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         
         area.lines[0].workCenters.push({
           id: wId, workCenterId: wId, machineName: wName || mName, name: wName,
+          wsSequence: wSeq,
           x: wX * 2.5, y: wY * 2.5,
           width: Math.max(wW * 6, 90), height: Math.max(wH * 6, 90),
           icon: 'tool', status: 'operational', detail: detail.replace(/"/g, '').trim()
@@ -880,7 +989,130 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     });
   };
 
+  const handleApprove = async () => {
+    if (!layoutId) return;
+    try {
+      await fetch(`/api/layouts/${layoutId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewedBy: 'Admin' }),
+      });
+      window.location.href = '/admin';
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!layoutId) return;
+    try {
+      await fetch(`/api/layouts/${layoutId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewedBy: 'Admin' }),
+      });
+      if (factory?.adminComments) {
+        await fetch(`/api/layouts/${layoutId}/comment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adminComments: factory.adminComments, reviewedBy: 'Admin' }),
+        });
+      }
+      window.location.href = '/admin';
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const selectedArea = factory?.areas?.find((a: any) => a.id === selectedAreaId);
+
+  if (isAdmin) {
+    return (
+        <div className="flex flex-1 flex-col relative bg-[#0b1120] overflow-hidden w-full h-full font-sans">
+          {/* Canvas Container */}
+          <div ref={containerRef} className="flex-1 overflow-hidden z-10 flex items-center justify-center">
+            <canvas
+              ref={canvasRef}
+              className="block cursor-grab active:cursor-grabbing w-full h-full"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onWheel={handleWheel}
+              onContextMenu={e => e.preventDefault()}
+            />
+          </div>
+
+          {/* Download Image Button Top Right */}
+          <div className="absolute top-4 right-4 z-20">
+             <Button onClick={() => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                const link = document.createElement('a');
+                link.download = `factory_layout_blueprint.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+             }} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
+               <Download className="mr-2 h-4 w-4" /> Download Blueprint
+             </Button>
+          </div>
+
+          {/* Top Left Controls & Info */}
+          <div className="absolute top-4 left-4 z-20 flex items-center gap-6">
+             <Button onClick={() => window.location.href = '/admin'} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
+               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Console
+             </Button>
+             <div className="h-6 w-px bg-[#334155]"></div>
+             <div>
+               <h2 className="text-white font-bold text-lg tracking-wide">{factory?.name || 'Layout Blueprint'}</h2>
+               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Admin Review Mode</p>
+             </div>
+          </div>
+
+          {/* Legend */}
+          <div className="absolute bottom-[140px] left-1/2 -translate-x-1/2 z-20 flex items-center gap-8 bg-[#0f172a] border border-[#1e293b] px-8 py-4 rounded-xl shadow-2xl">
+             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+                <div className="w-5 h-3 border border-[#10b981] rounded-sm"></div> Workstation
+             </div>
+             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+                <div className="w-6 border-t border-dashed border-[#f59e0b] relative">
+                   <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#f59e0b]"></div>
+                </div> 
+                Internal Escalator
+             </div>
+             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+                <div className="w-6 border-t border-dashed border-[#ef4444] relative">
+                   <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#ef4444]"></div>
+                </div> 
+                Outer Escalator
+             </div>
+             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+                <div className="w-6 h-3 border border-dashed border-slate-500 rounded-sm"></div> Area
+             </div>
+          </div>
+
+          {/* Comment Panel */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-4xl z-20 flex flex-col gap-3 bg-[#0f172a] border border-[#1e293b] px-6 py-5 rounded-2xl shadow-2xl">
+              <h3 className="text-white text-sm font-bold tracking-wide">Add Comments</h3>
+              <div className="flex gap-4 items-center">
+                 <input 
+                    type="text" 
+                    value={factory?.adminComments || ''}
+                    onChange={e => setFactory((prev: any) => ({ ...prev, adminComments: e.target.value }))}
+                    className="flex-1 bg-[#0b1120] border border-[#334155] rounded-xl px-4 py-3 text-sm text-slate-200 outline-none focus:border-[#64748b] shadow-inner transition-colors"
+                    placeholder="Write your comments here..."
+                 />
+                 <Button onClick={handleApprove} className="bg-[#10b981] hover:bg-[#059669] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
+                    <Check className="mr-2 h-5 w-5" /> Approve
+                 </Button>
+                 <Button onClick={handleReject} className="bg-[#ef4444] hover:bg-[#dc2626] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
+                    <X className="mr-2 h-5 w-5" /> Disapprove
+                 </Button>
+              </div>
+          </div>
+        </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col bg-slate-50">
@@ -944,21 +1176,6 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         >
           <Grid3x3 className="h-4 w-4 mr-1" /> Grid
         </Button>
-
-        {/* Quick area focusers */}
-        <div className="h-6 w-px bg-slate-200 mx-1" />
-        <span className="text-xs text-slate-400">Quick Focus:</span>
-        {factory?.areas?.map((area: any) => (
-          <Button
-            key={area.id}
-            variant="ghost"
-            size="sm"
-            className={`text-xs ${selectedAreaId === area.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600'}`}
-            onClick={() => focusOnArea(area)}
-          >
-            {area.areaName.split(' ').slice(0, 2).join(' ')}
-          </Button>
-        ))}
 
         <div className="ml-auto" />
 
@@ -1182,11 +1399,9 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         </div>
 
         {/* Canvas Container */}
-        <div ref={containerRef} className="flex-1 overflow-hidden z-10 bg-[#0f172a]">
+        <div ref={containerRef} className="flex-1 overflow-hidden z-10 bg-[#0f172a] flex items-center justify-center">
           <canvas
             ref={canvasRef}
-            width={1600}
-            height={900}
             className="w-full h-full cursor-grab active:cursor-grabbing block"
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

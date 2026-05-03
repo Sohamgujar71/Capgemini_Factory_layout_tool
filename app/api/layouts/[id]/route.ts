@@ -3,10 +3,11 @@ import { removeLayout } from '@/lib/store';
 
 export async function DELETE(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        removeLayout(params.id);
+        const { id } = await params;
+        removeLayout(id);
         return NextResponse.json({ success: true, message: 'Layout removed successfully' });
     } catch (error) {
         return NextResponse.json(
@@ -18,12 +19,13 @@ export async function DELETE(
 
 export async function PUT(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
+        const { id } = await params;
         const body = await request.json();
         const { updateLayout } = await import('@/lib/store');
-        const updated = updateLayout(params.id, body);
+        const updated = updateLayout(id, body);
         if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 });
         return NextResponse.json(updated);
     } catch (error) {

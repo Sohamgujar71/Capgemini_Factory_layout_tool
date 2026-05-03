@@ -1,6 +1,7 @@
 
 import { Configuration } from './types';
 import { defaultFactory } from './boilerplate-data';
+import { threeAssembliesFactory } from './three-assemblies';
 
 // Initial Mock Interface
 let layouts: Configuration[] = [
@@ -14,11 +15,22 @@ let layouts: Configuration[] = [
         updatedAt: new Date().toISOString()
     },
     {
+        id: 'three-assemblies-v1',
+        version: '2.0.0',
+        name: 'Three Assemblies Layout',
+        factory: threeAssembliesFactory as any,
+        isActive: false,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    },
+    {
         id: 'pending-v2',
         version: '1.1.0-beta',
         name: 'Optimized Machine Shop Layout',
         factory: { ...defaultFactory, name: 'Optimized Layout' }, // Just a slight variant
         isActive: false,
+        status: 'pending',
         createdAt: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
         updatedAt: new Date(Date.now() + 1000 * 60 * 60).toISOString()
     }

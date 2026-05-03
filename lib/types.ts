@@ -111,7 +111,10 @@ export interface Configuration {
   name: string;
   factory: Factory;
   isActive: boolean; // New field
-  status?: 'draft' | 'pending' | 'active' | 'inactive';
+  status?: 'draft' | 'pending' | 'approved' | 'rejected' | 'active' | 'inactive';
+  adminComments?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
   activatedBy?: string;
   activatedAt?: string; // Date or string
   createdAt: string; // Date or string

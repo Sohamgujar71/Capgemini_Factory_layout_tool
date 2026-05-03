@@ -13,6 +13,7 @@ export default function EditorPage() {
   const [isClient, setIsClient] = useState(false);
   const [layoutData, setLayoutData] = useState<any>(null);
   const [layoutId, setLayoutId] = useState<string | null>(null);
+  const [layoutName, setLayoutName] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [parentName, setParentName] = useState('Admin Console');
   const [parentUrl, setParentUrl] = useState('/admin');
@@ -37,6 +38,7 @@ export default function EditorPage() {
           if (matched) {
             setLayoutData(matched.factory);
             setLayoutId(matched.id);
+            setLayoutName(matched.name);
             return;
           }
         }
@@ -44,6 +46,7 @@ export default function EditorPage() {
         if (active) {
           setLayoutData(active.factory);
           setLayoutId(active.id);
+          setLayoutName(active.name);
         }
       })
       .catch(console.error)
@@ -75,51 +78,57 @@ export default function EditorPage() {
     <AuthGuard>
       <div className="flex h-screen flex-col bg-slate-50">
         {/* Header */}
-        <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-sm">
-          <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                <Factory className="h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-slate-900">Layout Editor</h1>
-                <p className="text-xs text-slate-500">Visual factory layout designer</p>
-              </div>
-            </div>
+        {getCurrentUser()?.role !== 'admin' && (
+          <>
+            <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur-sm">
+              <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                    <Factory className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold text-slate-900">
+                      Layout Editor {layoutName && <span className="text-indigo-600">- {layoutName}</span>}
+                    </h1>
+                    <p className="text-xs text-slate-500">Visual factory layout designer</p>
+                  </div>
+                </div>
 
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 border border-emerald-100">
-                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-sm font-medium text-emerald-700">Editor Active</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 border border-emerald-100">
+                    <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-sm font-medium text-emerald-700">Editor Active</span>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-              >
-                <LogOut className="h-4 w-4" />
-                Logout
-              </button>
-            </div>
-          </div>
 
-          {/* Breadcrumb */}
-          <nav className="border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-xs sm:px-6 lg:px-8">
-            <div className="flex items-center gap-2">
-              <Link href={parentUrl} className="text-slate-400 hover:text-indigo-600 transition-colors">
-                {parentName}
-              </Link>
-              <ChevronRight className="h-3 w-3 text-slate-300" />
-              <span className="text-indigo-600 font-medium">Layout Editor</span>
-            </div>
-          </nav>
-        </header>
+              {/* Breadcrumb */}
+              <nav className="border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-xs sm:px-6 lg:px-8">
+                <div className="flex items-center gap-2">
+                  <Link href={parentUrl} className="text-slate-400 hover:text-indigo-600 transition-colors">
+                    {parentName}
+                  </Link>
+                  <ChevronRight className="h-3 w-3 text-slate-300" />
+                  <span className="text-indigo-600 font-medium">Layout Editor</span>
+                </div>
+              </nav>
+            </header>
+          </>
+        )}
 
         {/* Main Content */}
         <div className="flex flex-1 overflow-hidden">
           {isClient && !loading ? (
-            <GridEditor onSave={handleSaveFactory} initialFactory={layoutData} isAdmin={getCurrentUser()?.role === 'admin'} />
+            <GridEditor onSave={handleSaveFactory} initialFactory={layoutData} isAdmin={getCurrentUser()?.role === 'admin'} layoutId={layoutId} />
           ) : (
-            <div className="flex flex-1 items-center justify-center text-slate-400">
+            <div className="flex flex-1 items-center justify-center text-slate-400 bg-[#0f172a]">
               Loading layout...
             </div>
           )}
