@@ -9,6 +9,8 @@ interface GridEditorProps {
   onSave?: (factory: any) => void;
   initialFactory?: any;
   isAdmin?: boolean;
+  readOnly?: boolean;
+  layoutId?: string | null;
 }
 
 // Rounded Rectangle Utility (mirrors dashboard)
@@ -34,9 +36,9 @@ function roundRect(
 // Helper: Get first and last workstations per area based on wsSequence
 function getAreaBoundaryWorkcenters(factory: any) {
   if (!factory?.areas) return [];
-  
+
   const areaBoundaries: { area: any; first: any; last: any }[] = [];
-  
+
   factory.areas.forEach((area: any) => {
     const workCenters: any[] = [];
     area.lines?.forEach((line: any) => {
@@ -44,28 +46,82 @@ function getAreaBoundaryWorkcenters(factory: any) {
         workCenters.push({ ...wc, areaId: area.id });
       });
     });
-    
+
     if (workCenters.length === 0) return;
-    
+
     // Sort by wsSequence, fallback to id if sequence not available
     workCenters.sort((a, b) => {
-      if (a.wsSequence !== undefined && b.wsSequence !== undefined && a.wsSequence !== 0 && b.wsSequence !== 0) {
+      if (a.wsSequence !== undefined && b.wsSequence !== undefined) {
         return a.wsSequence - b.wsSequence;
       }
-      return parseInt((a.id || '').replace(/\D/g, '') || '0') - parseInt((b.id || '').replace(/\D/g, '') || '0');
+      return parseInt(a.id) - parseInt(b.id);
     });
-    
+
     areaBoundaries.push({
       area,
       first: workCenters[0],
       last: workCenters[workCenters.length - 1]
     });
   });
-  
+
   return areaBoundaries;
 }
 
-export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEditorProps) {
+const EXCEL_WORKSTATIONS: Record<string, {
+  ws_id: string;
+  process: string;
+  machine: string;
+  status: 'Running' | 'Idle' | 'Bottleneck' | 'Down' | 'Critical';
+  cycle_time: string;
+  oee: string;
+  throughput: string;
+  mtbf: string;
+  mttr: string;
+  quality: string;
+  special_kpi: string;
+  process_type: string;
+  machine_type: string;
+  key_function: string;
+  critical_hover_kpis: string;
+}> = {
+  // ── Chassis Assembly (W1–W9) ────────────────────────────────────────────────
+  // Source: Factory_Workstation_Breakdown.xlsx → "Chassis Assembly" sheet
+  w1:  { ws_id:'W1',  process:'Base Loading',  machine:'Conveyor',         status:'Running',    cycle_time:'40 (Target 38)', oee:'92', throughput:'90',  mtbf:'150', mttr:'10', quality:'99.5', special_kpi:'Input Delay: 2s',        process_type:'Base Loading',   machine_type:'Conveyor + Fixture',   key_function:'Load chassis base',    critical_hover_kpis:'Status, Cycle Time, Throughput'    },
+  w2:  { ws_id:'W2',  process:'Alignment',     machine:'Positioning',      status:'Running',    cycle_time:'45',             oee:'90', throughput:'80',  mtbf:'140', mttr:'12', quality:'99.2', special_kpi:'Alignment Error: 0.3mm', process_type:'Alignment',      machine_type:'Positioning System',   key_function:'Align frame',          critical_hover_kpis:'Alignment Accuracy, Cycle Time'   },
+  w3:  { ws_id:'W3',  process:'Welding 1',     machine:'Robot',            status:'Idle',       cycle_time:'55',             oee:'85', throughput:'70',  mtbf:'120', mttr:'15', quality:'97.8', special_kpi:'Weld Temp: 1450°C',      process_type:'Welding 1',      machine_type:'Robotic Welding',      key_function:'Initial weld joints',  critical_hover_kpis:'OEE, Weld Temp, Defects'          },
+  w4:  { ws_id:'W4',  process:'Welding 2',     machine:'Robot',            status:'Running',    cycle_time:'50',             oee:'88', throughput:'75',  mtbf:'130', mttr:'14', quality:'98.5', special_kpi:'Weld Strength: OK',       process_type:'Welding 2',      machine_type:'Robotic Arm',          key_function:'Structural welding',   critical_hover_kpis:'MTBF, Weld Quality'                },
+  w5:  { ws_id:'W5',  process:'Central Join',  machine:'Multi-axis Robot', status:'Bottleneck', cycle_time:'60 (Target 50)', oee:'78', throughput:'60',  mtbf:'110', mttr:'20', quality:'97',   special_kpi:'Bottleneck: YES',         process_type:'Central Join',   machine_type:'Multi-axis Robot',     key_function:'Main chassis join',    critical_hover_kpis:'Bottleneck Flag, Cycle Time'       },
+  w6:  { ws_id:'W6',  process:'Welding 3',     machine:'Robot',            status:'Running',    cycle_time:'52',             oee:'86', throughput:'72',  mtbf:'125', mttr:'15', quality:'98.2', special_kpi:'Arc Stability: Good',     process_type:'Welding 3',      machine_type:'Robotic Welding',      key_function:'Side weld',            critical_hover_kpis:'Throughput, Defects'               },
+  w7:  { ws_id:'W7',  process:'Inspection',    machine:'Vision System',    status:'Running',    cycle_time:'30',             oee:'95', throughput:'110', mtbf:'200', mttr:'8',  quality:'99.8', special_kpi:'Defect Rate: 0.5%',       process_type:'Inspection 1',   machine_type:'Vision System',        key_function:'Weld inspection',      critical_hover_kpis:'Pass/Fail, Defect Rate'           },
+  w8:  { ws_id:'W8',  process:'Reinforcement', machine:'Hybrid',           status:'Idle',       cycle_time:'65',             oee:'82', throughput:'65',  mtbf:'100', mttr:'18', quality:'97.5', special_kpi:'Operator: ID102',         process_type:'Reinforcement',  machine_type:'Manual/Robot Hybrid',  key_function:'Reinforcement fitting',critical_hover_kpis:'Operator ID, Cycle Time'          },
+  w9:  { ws_id:'W9',  process:'Transfer',      machine:'Conveyor',         status:'Running',    cycle_time:'20',             oee:'96', throughput:'120', mtbf:'220', mttr:'5',  quality:'—',    special_kpi:'Queue: 3 units',          process_type:'Output Transfer', machine_type:'Conveyor',             key_function:'Move to next line',    critical_hover_kpis:'Line Balance, Waiting Status'     },
+
+  // ── Main Framing Assembly (W10–W18) ─────────────────────────────────────────
+  // Source: Factory_Workstation_Breakdown.xlsx → "Main Framing" sheet
+  w10: { ws_id:'W10', process:'Input',         machine:'Conveyor',         status:'Running',    cycle_time:'25',             oee:'94', throughput:'130', mtbf:'200', mttr:'6',  quality:'—',    special_kpi:'Input Rate Stable',       process_type:'Frame Input',       machine_type:'Conveyor',            key_function:'Receive chassis',      critical_hover_kpis:'Status, Input Rate'               },
+  w11: { ws_id:'W11', process:'Assembly 1',    machine:'Robot',            status:'Running',    cycle_time:'48',             oee:'89', throughput:'78',  mtbf:'135', mttr:'12', quality:'98.7', special_kpi:'Load Balance OK',         process_type:'Frame Assembly 1',  machine_type:'Robot',               key_function:'Frame build',          critical_hover_kpis:'Cycle Time, OEE'                  },
+  w12: { ws_id:'W12', process:'Assembly 2',    machine:'Robot',            status:'Idle',       cycle_time:'52',             oee:'84', throughput:'72',  mtbf:'120', mttr:'15', quality:'97.9', special_kpi:'Minor Delay',             process_type:'Frame Assembly 2',  machine_type:'Robot',               key_function:'Structural assembly',  critical_hover_kpis:'MTTR, Throughput'                 },
+  w13: { ws_id:'W13', process:'Fastening',     machine:'Nutrunner',        status:'Running',    cycle_time:'35',             oee:'91', throughput:'100', mtbf:'160', mttr:'10', quality:'99.1', special_kpi:'Torque: 45 Nm',           process_type:'Fastening',         machine_type:'Nutrunner',           key_function:'Bolt fastening',       critical_hover_kpis:'Torque Value, Quality'            },
+  w14: { ws_id:'W14', process:'Alignment',     machine:'Vision',           status:'Running',    cycle_time:'28',             oee:'95', throughput:'115', mtbf:'210', mttr:'7',  quality:'99.6', special_kpi:'Accuracy: 99.4%',         process_type:'Alignment Check',   machine_type:'Vision + Sensors',    key_function:'Dimensional check',    critical_hover_kpis:'Accuracy %, Rejection'            },
+  w15: { ws_id:'W15', process:'Transfer',      machine:'Lift Conveyor',    status:'Down',       cycle_time:'—',              oee:'60', throughput:'0',   mtbf:'90',  mttr:'25', quality:'—',    special_kpi:'Fault: Motor',            process_type:'Vertical Transfer', machine_type:'Lift Conveyor',       key_function:'Move down line',       critical_hover_kpis:'Delay Time'                       },
+  w16: { ws_id:'W16', process:'Sub Assembly',  machine:'Robot',            status:'Idle',       cycle_time:'50',             oee:'83', throughput:'70',  mtbf:'110', mttr:'16', quality:'98',   special_kpi:'Waiting Input',           process_type:'Sub Assembly',      machine_type:'Robot',               key_function:'Add sub-parts',        critical_hover_kpis:'OEE, Cycle Time'                  },
+  w17: { ws_id:'W17', process:'Inspection',    machine:'Vision',           status:'Running',    cycle_time:'30',             oee:'96', throughput:'110', mtbf:'220', mttr:'6',  quality:'99.7', special_kpi:'Pass Rate High',          process_type:'Inspection 2',      machine_type:'Vision System',       key_function:'Check assembly',       critical_hover_kpis:'Pass Rate'                        },
+  w18: { ws_id:'W18', process:'Output',        machine:'Conveyor',         status:'Running',    cycle_time:'22',             oee:'95', throughput:'120', mtbf:'210', mttr:'5',  quality:'—',    special_kpi:'Flow Smooth',             process_type:'Output Transfer',   machine_type:'Conveyor',            key_function:'Send to engine line',  critical_hover_kpis:'Flow Rate'                        },
+
+  // ── Engine Assembly (W19–W27) ────────────────────────────────────────────────
+  // Source: Factory_Workstation_Breakdown.xlsx → "Engine Assembly" sheet
+  w19: { ws_id:'W19', process:'Input',         machine:'Conveyor',         status:'Running',    cycle_time:'20',             oee:'95', throughput:'140', mtbf:'230', mttr:'5',  quality:'—',    special_kpi:'Input Stable',            process_type:'Engine Input',       machine_type:'Conveyor',           key_function:'Engine arrival',       critical_hover_kpis:'Status'                           },
+  w20: { ws_id:'W20', process:'Mount Prep',    machine:'Fixture',          status:'Running',    cycle_time:'38',             oee:'90', throughput:'95',  mtbf:'150', mttr:'10', quality:'99',   special_kpi:'Prep Accuracy',           process_type:'Mount Prep',         machine_type:'Fixture System',     key_function:'Prepare mount',        critical_hover_kpis:'Cycle Time'                       },
+  w21: { ws_id:'W21', process:'Mounting',      machine:'Robot',            status:'Running',    cycle_time:'50',             oee:'88', throughput:'80',  mtbf:'130', mttr:'12', quality:'98.6', special_kpi:'Alignment OK',            process_type:'Engine Mounting',    machine_type:'Robot',              key_function:'Mount engine',         critical_hover_kpis:'Accuracy, Cycle Time'             },
+  w22: { ws_id:'W22', process:'Fastening',     machine:'Nutrunner',        status:'Running',    cycle_time:'32',             oee:'92', throughput:'110', mtbf:'170', mttr:'9',  quality:'99.3', special_kpi:'Torque: 50 Nm',           process_type:'Fastening',          machine_type:'Nutrunner',          key_function:'Tightening',           critical_hover_kpis:'Torque, Quality'                  },
+  w23: { ws_id:'W23', process:'Fluid Connect', machine:'Semi-auto',        status:'Idle',       cycle_time:'45',             oee:'85', throughput:'75',  mtbf:'120', mttr:'14', quality:'97.5', special_kpi:'Leak Risk',               process_type:'Fluid Connect',      machine_type:'Semi-auto',          key_function:'Connect pipes',        critical_hover_kpis:'Leak Status'                      },
+  w24: { ws_id:'W24', process:'Electrical',    machine:'Hybrid',           status:'Running',    cycle_time:'40',             oee:'89', throughput:'90',  mtbf:'140', mttr:'11', quality:'98.8', special_kpi:'Error: 0.8%',             process_type:'Electrical Connect', machine_type:'Manual/Robot',       key_function:'Wiring',               critical_hover_kpis:'Error Rate'                       },
+  w25: { ws_id:'W25', process:'Testing',       machine:'Diagnostic',       status:'Critical',   cycle_time:'70',             oee:'75', throughput:'50',  mtbf:'100', mttr:'20', quality:'96.5', special_kpi:'Error Code: E204',        process_type:'Testing',            machine_type:'Diagnostic System',  key_function:'Engine test',          critical_hover_kpis:'Pass/Fail, Error Codes'           },
+  w26: { ws_id:'W26', process:'Inspection',    machine:'Vision',           status:'Running',    cycle_time:'35',             oee:'94', throughput:'105', mtbf:'210', mttr:'6',  quality:'99.5', special_kpi:'Yield High',              process_type:'Final Inspection',   machine_type:'Vision + Sensors',   key_function:'Final QC',             critical_hover_kpis:'Yield %'                          },
+  w27: { ws_id:'W27', process:'Dispatch',      machine:'Conveyor',         status:'Running',    cycle_time:'18',             oee:'96', throughput:'150', mtbf:'240', mttr:'4',  quality:'—',    special_kpi:'Queue: 1',                process_type:'Dispatch',           machine_type:'Conveyor',           key_function:'Send to next stage',   critical_hover_kpis:'Throughput'                       },
+};
+
+export function GridEditor({ onSave, initialFactory, isAdmin = false, readOnly = false, layoutId = null }: GridEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number>(0);
@@ -73,6 +129,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
   const [factory, setFactory] = useState(initialFactory || defaultFactory);
   const [showGrid, setShowGrid] = useState(true);
   const [savedMsg, setSavedMsg] = useState(false);
+  const [shareMsg, setShareMsg] = useState(false);
 
   // Smooth view state (same lerp system as dashboard)
   const [viewState, setViewState] = useState({
@@ -82,7 +139,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
 
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [hoveredEntity, setHoveredEntity] = useState<{ type: 'area' | 'machine'; id: string } | null>(null);
-  const [tooltipState, setTooltipState] = useState<{ x: number, y: number, text: string } | null>(null);
+  const [tooltipState, setTooltipState] = useState<{ x: number, y: number, wc?: any, text?: string } | null>(null);
   const [draggingMachine, setDraggingMachine] = useState<{ id: string, areaId: string, lineId: string } | null>(null);
   const [areaLayoutTypes, setAreaLayoutTypes] = useState<Record<string, string>>({});
   const [collapsedAreas, setCollapsedAreas] = useState<Record<string, boolean>>({});
@@ -90,6 +147,60 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
   const [editingWidth, setEditingWidth] = useState<string | null>(null);
   const [editingHeight, setEditingHeight] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [allFilters, setAllFilters] = useState<any[]>([]);
+  const [activeFilterIds, setActiveFilterIds] = useState<Record<string, boolean>>({});
+
+  // Fetch and parse filters XML dynamically
+  useEffect(() => {
+    fetch('/config/filters.xml')
+      .then(res => res.text())
+      .then(xmlText => {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+        const filterNodes = xmlDoc.getElementsByTagName("filter");
+        const parsed = Array.from(filterNodes).map(node => ({
+          id: node.getAttribute("id") || '',
+          label: node.getAttribute("label") || '',
+          default: node.getAttribute("default") === "true",
+          category: node.getAttribute("category") || '',
+          description: node.getAttribute("description") || '',
+          icon: node.getAttribute("icon") || 'Info'
+        }));
+        setAllFilters(parsed);
+        
+        const initialActive: Record<string, boolean> = {};
+        parsed.forEach(f => {
+          initialActive[f.id] = f.default;
+        });
+
+        const params = new URLSearchParams(window.location.search);
+        const urlFilters = params.get('filters');
+        if (urlFilters) {
+          const activeIds = urlFilters.split(',');
+          parsed.forEach(f => {
+            initialActive[f.id] = activeIds.includes(f.id);
+          });
+        }
+        
+        setActiveFilterIds(initialActive);
+      })
+      .catch(err => {
+        console.error('Failed to load filters.xml, falling back to static config:', err);
+        const fallback = [
+          { id: 'ws_id', label: 'Workstation ID', default: true, category: 'Identification', description: 'Unique identifier', icon: 'Fingerprint' },
+          { id: 'ws_name', label: 'Workstation Name', default: true, category: 'Identification', description: 'Display name', icon: 'Tag' },
+          { id: 'machine_name', label: 'Machine Name', default: true, category: 'Equipment', description: 'Hardware name', icon: 'Cpu' },
+          { id: 'ws_sequence', label: 'Sequence', default: true, category: 'Process', description: 'Assembly sequence', icon: 'Binary' },
+          { id: 'status', label: 'Status', default: true, category: 'Process', description: 'Current status', icon: 'Activity' },
+          { id: 'detail', label: 'Operational Details', default: true, category: 'Process', description: 'Work details', icon: 'Info' }
+        ];
+        setAllFilters(fallback);
+        const initialActive: Record<string, boolean> = {};
+        fallback.forEach(f => { initialActive[f.id] = f.default; });
+        setActiveFilterIds(initialActive);
+      });
+  }, []);
 
   // Pan state
   const isPanningRef = useRef(false);
@@ -305,11 +416,11 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         for (let i = 0; i < areaBoundaries.length - 1; i++) {
           const currentArea = areaBoundaries[i];
           const nextArea = areaBoundaries[i + 1];
-          
+
           if (currentArea.last && nextArea.first) {
             const fromWC = currentArea.last;
             const toWC = nextArea.first;
-            
+
             const fromCX = (fromWC.x + fromWC.width / 2) * zoom + panX;
             const fromCY = (fromWC.y + fromWC.height / 2) * zoom + panY;
             const toCX = (toWC.x + toWC.width / 2) * zoom + panX;
@@ -342,21 +453,21 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
               // Vertical dominant routing (e.g. W18 -> W19)
               const currentAreaBox = currentArea.area;
               const areaBottomY = (currentAreaBox.y + currentAreaBox.height) * zoom + panY;
-              
+
               if (toCY > fromCY) {
                 fx = fromCX;
                 fy = (fromWC.y + fromWC.height) * zoom + panY; // Bottom
                 tx = toCX;
                 ty = toWC.y * zoom + panY; // Top
                 angle = Math.PI / 2;
-                
+
                 // Route outside the box neatly
                 // Place the horizontal line halfway between the bottom of the area box and the target WC
                 const paddingBelowBox = 40 * zoom;
                 const minCy = areaBottomY + paddingBelowBox;
                 const defaultCy = fy + (ty - fy) / 2;
                 const cy = Math.max(defaultCy, minCy);
-                
+
                 p1x = fx; p1y = cy;
                 p2x = tx; p2y = cy;
               } else {
@@ -365,7 +476,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
                 tx = toCX;
                 ty = (toWC.y + toWC.height) * zoom + panY; // Bottom
                 angle = -Math.PI / 2;
-                
+
                 const cy = fy + (ty - fy) / 2;
                 p1x = fx; p1y = cy;
                 p2x = tx; p2y = cy;
@@ -430,10 +541,17 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             const wh = wc.height * zoom;
 
             const isMachineHovered = hoveredEntity?.type === 'machine' && hoveredEntity.id === wc.id;
-            const statusColor =
-              wc.status === 'operational' ? '#10b981' :
-                wc.status === 'idle' ? '#f59e0b' :
-                  wc.status === 'maintenance' ? '#f97316' : '#ef4444';
+            
+            const _rawId = (wc.id || wc.workCenterId || wc.ws_id || '').toLowerCase();
+            const wcIdKey = EXCEL_WORKSTATIONS[_rawId] ? _rawId : ('w' + _rawId.replace(/^w/, ''));
+            const excelData = EXCEL_WORKSTATIONS[wcIdKey];
+            const statusVal = (excelData?.status || wc.status || 'Running').toLowerCase();
+
+            let statusColor = '#10b981'; // Default Running
+            if (statusVal === 'idle') statusColor = '#f59e0b';
+            else if (statusVal === 'bottleneck') statusColor = '#f97316';
+            else if (statusVal === 'down') statusColor = '#f43f5e'; // Down
+            else if (statusVal === 'critical') statusColor = '#ef4444'; // Critical
 
             // Machine box
             ctx.fillStyle = isMachineHovered ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.8)';
@@ -455,7 +573,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             if (wc.name) {
               const text = wc.name.toUpperCase();
               ctx.fillStyle = isMachineHovered ? '#bae6fd' : '#f8fafc'; // glowing text
-              ctx.font = `bold ${Math.max(12, 22 * zoom)}px Inter, sans-serif`;
+              const fontSize = Math.max(8, 32 * zoom);
+              ctx.font = `bold ${fontSize}px Inter, sans-serif`;
               ctx.textAlign = 'center';
               ctx.textBaseline = 'middle';
               ctx.fillText(text, wx + ww / 2, wy + wh / 2);
@@ -495,10 +614,10 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     const scaleX = (canvas.width - padding * 2) / factory.width;
     const scaleY = (canvas.height - padding * 2) / factory.height;
     const targetZoom = Math.min(scaleX, scaleY, 2.0);
-    
+
     const contentWidth = factory.width * targetZoom;
     const contentHeight = factory.height * targetZoom;
-    
+
     setViewState(prev => ({
       ...prev,
       targetZoom,
@@ -510,7 +629,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
   // Fit to screen on initial load
   useEffect(() => {
     const timer = setTimeout(() => {
-       handleFitToScreen();
+      handleFitToScreen();
     }, 100);
     return () => clearTimeout(timer);
   }, [factory, handleFitToScreen]);
@@ -538,13 +657,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
       });
     });
 
-    if (isAdmin) {
-      // Prevent all interaction except zooming
-      e.preventDefault();
-      return;
-    }
-
-    if (foundMachine) {
+    if (foundMachine && !isAdmin && !readOnly) {
       setDraggingMachine(foundMachine);
       e.preventDefault();
       return;
@@ -669,18 +782,19 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     factory?.areas?.forEach((area: any) => {
       if (mx >= area.x && mx <= area.x + area.width && my >= area.y && my <= area.y + area.height) {
         found = { type: 'area', id: area.id };
-        if (zoom > 0.5) {
-          area.lines?.forEach((line: any) => {
-            line.workCenters?.forEach((wc: any) => {
-              if (mx >= wc.x && mx <= wc.x + wc.width && my >= wc.y && my <= wc.y + wc.height) {
-                found = { type: 'machine', id: wc.id };
-                if (wc.detail) {
-                  newTooltip = { x: e.clientX, y: e.clientY - 40, text: wc.detail };
-                }
-              }
-            });
+        // Hover detection for workstations works at ANY zoom level —
+        // mx/my are already in world-space so the hit test is zoom-independent.
+        area.lines?.forEach((line: any) => {
+          line.workCenters?.forEach((wc: any) => {
+            if (mx >= wc.x && mx <= wc.x + wc.width && my >= wc.y && my <= wc.y + wc.height) {
+              found = { type: 'machine', id: wc.id };
+              // Keep tooltip inside viewport: prefer right of cursor, flip left if near right edge
+              const tipX = e.clientX + 18;
+              const tipY = Math.max(10, e.clientY - 50);
+              newTooltip = { x: tipX, y: tipY, wc: wc, text: wc.detail };
+            }
           });
-        }
+        });
       }
     });
 
@@ -712,10 +826,12 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
           }
         });
 
-        if (hitArea) {
-          setSelectedAreaId(hitArea.id === selectedAreaId ? null : hitArea.id);
-        } else {
-          setSelectedAreaId(null);
+        if (!isAdmin && !readOnly) {
+          if (hitArea) {
+            setSelectedAreaId(hitArea.id === selectedAreaId ? null : hitArea.id);
+          } else {
+            setSelectedAreaId(null);
+          }
         }
       }
     }
@@ -742,7 +858,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     const delta = e.deltaY > 0 ? -0.15 : 0.15;
     const oldZoom = viewState.targetZoom;
     const newZoom = Math.max(0.1, Math.min(3.0, oldZoom + delta));
-    
+
     // Zoom toward center of canvas
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
@@ -753,8 +869,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     const newPanX = cx - factoryX * newZoom;
     const newPanY = cy - factoryY * newZoom;
 
-    setViewState(prev => ({ 
-      ...prev, 
+    setViewState(prev => ({
+      ...prev,
       targetZoom: newZoom,
       targetPanX: newPanX,
       targetPanY: newPanY
@@ -820,15 +936,27 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             buffers: [], storage: []
           });
         }
-        
+
         const area = areasMap.get(areaId);
-        
+
         area.lines[0].workCenters.push({
-          id: wId, workCenterId: wId, machineName: wName || mName, name: wName,
+          id: wId,
+          workCenterId: wId,
+          machineName: wName || mName,
+          name: wName,
+          ws_id: wId,
+          ws_name: wName,
+          ws_sequence: wSeq,
+          machine_id: parts[29] || '',
+          machine_name: mName || '',
           wsSequence: wSeq,
-          x: wX * 2.5, y: wY * 2.5,
-          width: Math.max(wW * 6, 90), height: Math.max(wH * 6, 90),
-          icon: 'tool', status: 'operational', detail: detail.replace(/"/g, '').trim()
+          x: wX * 2.5,
+          y: wY * 2.5,
+          width: Math.max(wW * 6, 90),
+          height: Math.max(wH * 6, 90),
+          icon: 'tool',
+          status: 'operational',
+          detail: detail.replace(/"/g, '').trim()
         });
 
         if (fId && fFrom && fTo) {
@@ -858,11 +986,11 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
         area.lines[0].y = area.y;
         area.lines[0].width = area.width;
         area.lines[0].height = area.height;
-        
+
         if (area.x + area.width > globalMaxX) globalMaxX = area.x + area.width;
         if (area.y + area.height > globalMaxY) globalMaxY = area.y + area.height;
       });
-      
+
       for (let i = 0; i < areas.length; i++) {
         for (let j = 0; j < i; j++) {
           const area = areas[i];
@@ -881,10 +1009,10 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
           }
         }
       }
-      
+
       if (areas.length > 0) {
-         globalMaxX = Math.max(...areas.map((a: any) => a.x + a.width));
-         globalMaxY = Math.max(...areas.map((a: any) => a.y + a.height));
+        globalMaxX = Math.max(...areas.map((a: any) => a.x + a.width));
+        globalMaxY = Math.max(...areas.map((a: any) => a.y + a.height));
       }
 
       const newLayout = {
@@ -1047,9 +1175,9 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
   };
 
   const handleApprove = async () => {
-    if (!layoutId) return;
+    if (!factory.id) return;
     try {
-      await fetch(`/api/layouts/${layoutId}/approve`, {
+      await fetch(`/api/layouts/${factory.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewedBy: 'Admin' }),
@@ -1061,15 +1189,15 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
   };
 
   const handleReject = async () => {
-    if (!layoutId) return;
+    if (!factory.id) return;
     try {
-      await fetch(`/api/layouts/${layoutId}/reject`, {
+      await fetch(`/api/layouts/${factory.id}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewedBy: 'Admin' }),
       });
       if (factory?.adminComments) {
-        await fetch(`/api/layouts/${layoutId}/comment`, {
+        await fetch(`/api/layouts/${factory.id}/comment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ adminComments: factory.adminComments, reviewedBy: 'Admin' }),
@@ -1081,98 +1209,237 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
     }
   };
 
+  const handleShareLayout = () => {
+    const activeIds = Object.entries(activeFilterIds)
+      .filter(([_, active]) => active)
+      .map(([id]) => id)
+      .join(',');
+    
+    const baseUrl = window.location.origin + window.location.pathname;
+    const shareUrl = `${baseUrl}?id=${layoutId || factory.id || 'default-v1'}&filters=${activeIds}`;
+    
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setShareMsg(true);
+      setTimeout(() => setShareMsg(false), 2500);
+    });
+  };
+
   const selectedArea = factory?.areas?.find((a: any) => a.id === selectedAreaId);
 
-  if (isAdmin) {
+  const renderTooltipNode = () => {
+    if (!tooltipState) return null;
+    const wc = tooltipState.wc || {};
+    const _rawTooltipId = (wc.id || wc.workCenterId || wc.ws_id || '').toLowerCase();
+    const wcIdKey = EXCEL_WORKSTATIONS[_rawTooltipId] ? _rawTooltipId : ('w' + _rawTooltipId.replace(/^w/, ''));
+    const excelData = EXCEL_WORKSTATIONS[wcIdKey];
+    const statusVal = (excelData?.status || wc.status || 'Running').toLowerCase();
+
+    let dotColor = 'bg-emerald-500 animate-pulse';
+    if (statusVal === 'idle') dotColor = 'bg-amber-500';
+    else if (statusVal === 'bottleneck') dotColor = 'bg-orange-500';
+    else if (statusVal === 'down') dotColor = 'bg-rose-500';
+    else if (statusVal === 'critical') dotColor = 'bg-red-600 animate-ping';
+
+    const TIP_W = 270;
+    const TIP_H = 420;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+    const tipLeft = tooltipState.x + TIP_W > vw - 10 ? tooltipState.x - TIP_W - 18 : tooltipState.x;
+    const tipTop = Math.min(tooltipState.y, vh - TIP_H - 10);
+
     return (
-        <div className="flex flex-1 flex-col relative bg-[#0b1120] overflow-hidden w-full h-full font-sans">
-          {/* Canvas Container */}
-          <div ref={containerRef} className="flex-1 overflow-hidden z-10 flex items-center justify-center">
-            <canvas
-              ref={canvasRef}
-              className="block cursor-grab active:cursor-grabbing w-full h-full"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseLeave}
-              onWheel={handleWheel}
-              onContextMenu={e => e.preventDefault()}
-            />
-          </div>
-
-          {/* Download Image Button Top Right */}
-          <div className="absolute top-4 right-4 z-20">
-             <Button onClick={() => {
-                const canvas = canvasRef.current;
-                if (!canvas) return;
-                const link = document.createElement('a');
-                link.download = `factory_layout_blueprint.png`;
-                link.href = canvas.toDataURL('image/png');
-                link.click();
-             }} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
-               <Download className="mr-2 h-4 w-4" /> Download Blueprint
-             </Button>
-          </div>
-
-          {/* Top Left Controls & Info */}
-          <div className="absolute top-4 left-4 z-20 flex items-center gap-6">
-             <Button onClick={() => window.location.href = '/admin'} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
-               <ArrowLeft className="mr-2 h-4 w-4" /> Back to Console
-             </Button>
-             <div className="h-6 w-px bg-[#334155]"></div>
-             <div>
-               <h2 className="text-white font-bold text-lg tracking-wide">{factory?.name || 'Layout Blueprint'}</h2>
-               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Admin Review Mode</p>
-             </div>
-          </div>
-
-          {/* Legend */}
-          <div className="absolute bottom-[140px] left-1/2 -translate-x-1/2 z-20 flex items-center gap-8 bg-[#0f172a] border border-[#1e293b] px-8 py-4 rounded-xl shadow-2xl">
-             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
-                <div className="w-5 h-3 border border-[#10b981] rounded-sm"></div> Workstation
-             </div>
-             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
-                <div className="w-6 border-t border-dashed border-[#f59e0b] relative">
-                   <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#f59e0b]"></div>
-                </div> 
-                Internal Escalator
-             </div>
-             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
-                <div className="w-6 border-t border-dashed border-[#ef4444] relative">
-                   <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#ef4444]"></div>
-                </div> 
-                Outer Escalator
-             </div>
-             <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
-                <div className="w-6 h-3 border border-dashed border-slate-500 rounded-sm"></div> Area
-             </div>
-          </div>
-
-          {/* Comment Panel */}
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-4xl z-20 flex flex-col gap-3 bg-[#0f172a] border border-[#1e293b] px-6 py-5 rounded-2xl shadow-2xl">
-              <h3 className="text-white text-sm font-bold tracking-wide">Add Comments</h3>
-              <div className="flex gap-4 items-center">
-                 <input 
-                    type="text" 
-                    value={factory?.adminComments || ''}
-                    onChange={e => setFactory((prev: any) => ({ ...prev, adminComments: e.target.value }))}
-                    className="flex-1 bg-[#0b1120] border border-[#334155] rounded-xl px-4 py-3 text-sm text-slate-200 outline-none focus:border-[#64748b] shadow-inner transition-colors"
-                    placeholder="Write your comments here..."
-                 />
-                 <Button onClick={handleApprove} className="bg-[#10b981] hover:bg-[#059669] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
-                    <Check className="mr-2 h-5 w-5" /> Approve
-                 </Button>
-                 <Button onClick={handleReject} className="bg-[#ef4444] hover:bg-[#dc2626] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
-                    <X className="mr-2 h-5 w-5" /> Disapprove
-                 </Button>
+      <div className="fixed z-50 pointer-events-none p-4 text-xs text-slate-200 bg-[#0f172a]/95 backdrop-blur-md border border-[#1e293b] rounded-2xl shadow-2xl max-w-xs transition-opacity duration-150 flex flex-col gap-2.5 min-w-[240px]" style={{ left: tipLeft, top: Math.max(10, tipTop) }}>
+        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+          <div className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
+          <span className="font-bold text-white tracking-wide uppercase text-[10px]">Workstation Telemetry</span>
+        </div>
+        <div className="space-y-2.5">
+          {allFilters.map(filter => {
+            if (!activeFilterIds[filter.id]) return null;
+            let val = '';
+            if (filter.id === 'ws_id') val = excelData?.ws_id || wc.ws_id || wc.id || wc.workCenterId;
+            else if (filter.id === 'process') val = excelData?.process || wc.ws_name || wc.name;
+            else if (filter.id === 'process_type') val = excelData?.process_type || wc.process_type || '';
+            else if (filter.id === 'machine') val = excelData?.machine || wc.machine_name || wc.machineName;
+            else if (filter.id === 'machine_type') val = excelData?.machine_type || wc.machine_type || '';
+            else if (filter.id === 'key_function') val = excelData?.key_function || wc.key_function || '';
+            else if (filter.id === 'status') val = excelData?.status || wc.status;
+            else if (filter.id === 'cycle_time') {
+              const ct = excelData?.cycle_time || wc.cycle_time;
+              val = ct && ct !== '—' ? `${ct} s` : (ct || '');
+            }
+            else if (filter.id === 'throughput') {
+              const tp = excelData?.throughput || wc.throughput;
+              val = tp && tp !== '0' ? `${tp} units/hr` : (tp || '');
+            }
+            else if (filter.id === 'oee') val = excelData?.oee ? `${excelData.oee}%` : (wc.oee || '');
+            else if (filter.id === 'mtbf') val = excelData?.mtbf ? `${excelData.mtbf} hrs` : (wc.mtbf || '');
+            else if (filter.id === 'mttr') val = excelData?.mttr ? `${excelData.mttr} min` : (wc.mttr || '');
+            else if (filter.id === 'quality') {
+              const q = excelData?.quality || wc.quality;
+              val = q && q !== '—' && q !== '-' ? `${q}%` : (q || '');
+            }
+            else if (filter.id === 'special_kpi') val = excelData?.special_kpi || wc.detail || wc.special_kpi || '';
+            else if (filter.id === 'critical_hover_kpis') val = excelData?.critical_hover_kpis || wc.critical_hover_kpis || '';
+            
+            if (!val) return null;
+            
+            if (filter.id === 'status') {
+              let statusClass = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+              if (statusVal === 'idle') statusClass = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+              else if (statusVal === 'bottleneck') statusClass = 'text-orange-400 bg-orange-500/10 border-orange-500/20';
+              else if (statusVal === 'down') statusClass = 'text-rose-400 bg-rose-500/10 border-rose-500/20';
+              else if (statusVal === 'critical') statusClass = 'text-red-400 bg-red-500/10 border-red-500/20 animate-pulse font-bold';
+              return (
+                <div key={`tooltip-item-${filter.id}`} className="flex flex-col">
+                  <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">{filter.label}</span>
+                  <div className="flex mt-1">
+                    <span className={`text-[11px] px-2.5 py-0.5 rounded-full font-semibold border ${statusClass}`}>{val}</span>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={`tooltip-item-${filter.id}`} className="flex flex-col">
+                <span className="text-[9px] uppercase font-bold tracking-wider text-slate-400">{filter.label}</span>
+                <span className="text-xs font-semibold text-slate-200 mt-0.5 whitespace-pre-wrap">{val}</span>
               </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+
+  if (isAdmin || readOnly) {
+    return (
+      <div className="flex flex-1 flex-col relative bg-[#0b1120] overflow-hidden w-full h-full font-sans">
+        {/* Canvas Container */}
+        <div ref={containerRef} className="flex-1 overflow-hidden z-10 flex items-center justify-center">
+          <canvas
+            ref={canvasRef}
+            className="block cursor-grab active:cursor-grabbing w-full h-full"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeave}
+            onWheel={handleWheel}
+            onContextMenu={e => e.preventDefault()}
+          />
+        </div>
+
+        {/* Hover Tooltip Render */}
+        {renderTooltipNode()}
+
+        {/* Hover Parameters Panel (Admin/View Overlay) */}
+        {allFilters.length > 0 && (
+          <div className="absolute top-[80px] left-4 z-20 w-[280px] bg-[#0f172a]/95 backdrop-blur-md border border-[#1e293b] rounded-xl shadow-2xl p-4">
+            <h3 className="text-[11px] font-bold text-slate-300 uppercase tracking-wide mb-2.5 flex items-center gap-2">
+              <LayoutGrid className="h-3.5 w-3.5 text-indigo-400" /> Hover Parameters
+            </h3>
+            <p className="text-[10px] text-slate-400 mb-3 leading-relaxed">Toggle parameters below to customize the workstation hover tooltip.</p>
+            <div className="space-y-2 max-h-[40vh] overflow-y-auto custom-scrollbar pr-1">
+              {allFilters.map(filter => (
+                <label key={`admin-filter-${filter.id}`} className="flex items-start gap-2.5 p-1.5 hover:bg-[#1e293b]/50 rounded-lg cursor-pointer transition-colors border border-transparent hover:border-[#334155]">
+                  <input
+                    type="checkbox"
+                    checked={activeFilterIds[filter.id] ?? false}
+                    onChange={() => {
+                      setActiveFilterIds(prev => ({ ...prev, [filter.id]: !prev[filter.id] }));
+                    }}
+                    className="mt-0.5 h-3.5 w-3.5 rounded border-[#334155] bg-[#0f172a] text-indigo-500 focus:ring-indigo-500/50 accent-indigo-500 cursor-pointer"
+                  />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-[11px] font-semibold text-slate-200 leading-none">{filter.label}</span>
+                    <span className="text-[9px] text-slate-400 font-medium leading-normal">{filter.description}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Download Image Button Top Right */}
+        <div className="absolute top-4 right-4 z-20 flex gap-3">
+           <Button onClick={handleShareLayout} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4 transition-all">
+             <Upload className="mr-2 h-4 w-4 rotate-45" /> {shareMsg ? 'Link Copied ✓' : 'Share Layout URL'}
+           </Button>
+           <Button onClick={() => {
+              const canvas = canvasRef.current;
+              if (!canvas) return;
+              const link = document.createElement('a');
+              link.download = `factory_layout_blueprint.png`;
+              link.href = canvas.toDataURL('image/png');
+              link.click();
+           }} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
+             <Download className="mr-2 h-4 w-4" /> Download Blueprint
+           </Button>
+        </div>
+
+        {/* Top Left Controls & Info */}
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-6">
+          {!readOnly && (
+            <Button onClick={() => window.location.href = '/admin'} className="bg-[#1e293b] hover:bg-[#334155] text-white border border-[#334155] shadow-lg rounded-xl h-10 px-4">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Console
+            </Button>
+          )}
+          {!readOnly && <div className="h-6 w-px bg-[#334155]"></div>}
+          <div>
+            <h2 className="text-white font-bold text-lg tracking-wide">{factory?.name || 'Layout Blueprint'}</h2>
+            <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">{readOnly ? 'View Only' : 'Admin Review Mode'}</p>
           </div>
         </div>
+
+        {/* Legend */}
+        <div className="absolute bottom-[140px] left-1/2 -translate-x-1/2 z-20 flex items-center gap-8 bg-[#0f172a] border border-[#1e293b] px-8 py-4 rounded-xl shadow-2xl">
+          <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+            <div className="w-5 h-3 border border-[#10b981] rounded-sm"></div> Workstation
+          </div>
+          <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+            <div className="w-6 border-t border-dashed border-[#f59e0b] relative">
+              <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#f59e0b]"></div>
+            </div>
+            Internal Escalator
+          </div>
+          <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+            <div className="w-6 border-t border-dashed border-[#ef4444] relative">
+              <div className="absolute -right-1 -top-[3px] w-0 h-0 border-t-[3px] border-t-transparent border-b-[3px] border-b-transparent border-l-[4px] border-l-[#ef4444]"></div>
+            </div>
+            Outer Escalator
+          </div>
+          <div className="flex items-center gap-3 text-slate-300 text-sm font-medium">
+            <div className="w-6 h-3 border border-dashed border-slate-500 rounded-sm"></div> Area
+          </div>
+        </div>
+
+        {/* Comment Panel - Hidden for readOnly */}
+        {!readOnly && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-4xl z-20 flex flex-col gap-3 bg-[#0f172a] border border-[#1e293b] px-6 py-5 rounded-2xl shadow-2xl">
+            <h3 className="text-white text-sm font-bold tracking-wide">Add Comments</h3>
+            <div className="flex gap-4 items-center">
+              <input
+                type="text"
+                value={factory?.adminComments || ''}
+                onChange={e => setFactory((prev: any) => ({ ...prev, adminComments: e.target.value }))}
+                className="flex-1 bg-[#0b1120] border border-[#334155] rounded-xl px-4 py-3 text-sm text-slate-200 outline-none focus:border-[#64748b] shadow-inner transition-colors"
+                placeholder="Write your comments here..."
+              />
+              <Button onClick={handleApprove} className="bg-[#10b981] hover:bg-[#059669] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
+                <Check className="mr-2 h-5 w-5" /> Approve
+              </Button>
+              <Button onClick={handleReject} className="bg-[#ef4444] hover:bg-[#dc2626] text-white px-6 h-11 rounded-xl font-medium shadow-lg">
+                <X className="mr-2 h-5 w-5" /> Disapprove
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col bg-slate-50">
+    <div className="flex h-full w-full flex-col bg-slate-50">
       {/* Toolbar — matches dashboard toolbar style */}
       <div className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2 shadow-sm z-30 flex-wrap">
         <div className="flex items-center gap-2">
@@ -1261,6 +1528,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
+            {/* Hover Parameters and Share function have been moved exclusively to the Admin View */}
+
             {isAdmin && (
               <div className="mb-8 p-5 bg-white border border-indigo-100 rounded-2xl shadow-sm">
                 <label className="text-sm font-semibold text-slate-800 mb-2 block flex items-center gap-2">
@@ -1274,7 +1543,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
                     setFactory((prev: any) => ({ ...prev, adminComments: e.target.value }));
                   }}
                 />
-                <Button 
+                <Button
                   onClick={() => {
                     setSavedMsg(true);
                     if (onSave) onSave(factory);
@@ -1300,7 +1569,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             {factory?.areas?.map((area: any) => (
               <div key={`edit-area-${area.id}`} className="mb-6 pb-6 border-b border-slate-100 last:border-0 last:pb-0">
                 {/* Area Title Header */}
-                <div 
+                <div
                   className="flex items-center gap-2 mb-4 cursor-pointer group"
                   onClick={() => setCollapsedAreas(prev => ({ ...prev, [area.id]: !prev[area.id] }))}
                 >
@@ -1345,8 +1614,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
                         <div className="grid grid-cols-2 gap-3">
                           <div>
                             <label className="text-xs text-slate-500 font-medium mb-1 block">Width (W)</label>
-                            <input type="number" 
-                              value={editingWidth !== null ? editingWidth : Math.round(area.width)} 
+                            <input type="number"
+                              value={editingWidth !== null ? editingWidth : Math.round(area.width)}
                               onChange={e => {
                                 setEditingWidth(e.target.value);
                                 applyAutoLayout(area.id, areaLayoutTypes[area.id] || 'U-Shape', Number(e.target.value), area.height, false);
@@ -1359,8 +1628,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
                           </div>
                           <div>
                             <label className="text-xs text-slate-500 font-medium mb-1 block">Height (H)</label>
-                            <input type="number" 
-                              value={editingHeight !== null ? editingHeight : Math.round(area.height)} 
+                            <input type="number"
+                              value={editingHeight !== null ? editingHeight : Math.round(area.height)}
                               onChange={e => {
                                 setEditingHeight(e.target.value);
                                 applyAutoLayout(area.id, areaLayoutTypes[area.id] || 'U-Shape', area.width, Number(e.target.value), false);
@@ -1467,16 +1736,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false }: GridEdit
             onWheel={handleWheel}
             onContextMenu={e => e.preventDefault()}
           />
-
-          {/* Hover Tooltip */}
-          {tooltipState && (
-            <div
-              className="fixed z-50 pointer-events-none px-3 py-2 text-sm font-medium text-white bg-slate-800 rounded-lg shadow-xl max-w-xs transition-opacity duration-150"
-              style={{ left: tooltipState.x + 15, top: tooltipState.y }}
-            >
-              {tooltipState.text}
-            </div>
-          )}
+          {/* Hover Tooltip (Removed from Developer side) */}
         </div>
 
         {/* Bottom instructions bar */}
