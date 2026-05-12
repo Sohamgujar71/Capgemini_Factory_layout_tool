@@ -19,10 +19,12 @@ import {
   AlertCircle,
   ShieldCheck,
   Layout,
-  CheckCircle
+  CheckCircle,
+  Copy
 } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { toast } from '@/hooks/use-toast';
 
 export default function AdminPage() {
   const router = useRouter();
@@ -69,7 +71,7 @@ export default function AdminPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewedBy: user?.username || 'Admin' }),
       });
-      
+
       if (comment) {
         await fetch(`/api/layouts/${id}/comment`, {
           method: 'POST',
@@ -77,7 +79,7 @@ export default function AdminPage() {
           body: JSON.stringify({ adminComments: comment, reviewedBy: user?.username || 'Admin' }),
         });
       }
-      
+
       await fetchLayouts();
     } finally {
       setLoading(false);
@@ -101,6 +103,16 @@ export default function AdminPage() {
   const handleLogout = () => {
     logout();
     router.push('/');
+  };
+
+  const handleCopyUrl = (layoutId: string) => {
+    const url = `${window.location.origin}/view?id=${layoutId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      toast({
+        title: 'URL copied!',
+        description: 'Anyone with this link can view the layout without logging in.',
+      });
+    });
   };
 
   const quickActions = [
@@ -197,12 +209,19 @@ export default function AdminPage() {
                   {layouts.map((layout) => (
                     <tr key={layout.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
                           <Link target="_blank" href={`/admin/editor?id=${layout.id}`} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer">
                             {layout.name}
                           </Link>
-                          <span className="text-xs text-slate-400 font-mono mt-0.5">{layout.version}</span>
+                          <button
+                            onClick={() => handleCopyUrl(layout.id)}
+                            className="inline-flex items-center justify-center rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+                            title="Copy shareable URL"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
                         </div>
+                        <span className="text-xs text-slate-400 font-mono mt-0.5">{layout.version}</span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{new Date(layout.createdAt).toLocaleDateString()} {new Date(layout.createdAt).toLocaleTimeString()}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -250,7 +269,7 @@ export default function AdminPage() {
                           </div>
                         )}
                         {layout.status === 'approved' && !layout.isActive && (
-                           <div className="flex justify-end gap-3">
+                          <div className="flex justify-end gap-3">
                             <Button
                               onClick={() => handleActivate(layout.id)}
                               disabled={loading}
@@ -259,7 +278,7 @@ export default function AdminPage() {
                             >
                               <Factory className="h-4 w-4 mr-1" /> Make Live
                             </Button>
-                           </div>
+                          </div>
                         )}
                         {layout.isActive && (
                           <span className="text-xs text-emerald-600 font-medium px-3">Live on Dashboard</span>

@@ -27,12 +27,9 @@ export const parseCSV = (csvContent: string): Factory => {
 
   // Check if it's the complex CSV format
   if (headers.includes('factory_id') || headers.includes('canvas_width')) {
-    const wsDetails: any[] = [];
     const flows: any[] = [];
-
     let factoryId = '101', factoryName = 'Automotive Plant';
-    let areaId = '11', areaName = 'Assembly Area', areaX = 50, areaY = 50, areaW = 800, areaH = 600;
-    let lineId = '201', lineName = 'Assembly Line';
+    const areasMap = new Map<string, any>();
 
     for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].split(',');
@@ -40,14 +37,14 @@ export const parseCSV = (csvContent: string): Factory => {
 
         factoryId = parts[0] || factoryId;
         factoryName = parts[1] || factoryName;
-        areaId = parts[9] || areaId;
-        areaName = parts[10] || areaName;
-
-        lineId = parts[15] || lineId;
-        lineName = parts[16] || lineName;
+        const areaId = parts[9] || '11';
+        const areaName = parts[10] || 'Assembly Area';
+        const lineId = parts[15] || '201';
+        const lineName = parts[16] || 'Assembly Line';
 
         const wId = parts[22];
         const wName = parts[23];
+        const wSeq = parseInt(parts[24]) || 0;
         const wX = parseFloat(parts[25]);
         const wY = parseFloat(parts[26]);
         const wW = parseFloat(parts[27]);
@@ -61,11 +58,35 @@ export const parseCSV = (csvContent: string): Factory => {
         const fLabel = parts[39];
         const detail = parts.slice(40).join(',');
 
-        wsDetails.push({
-            id: wId, workCenterId: wId, machineName: wName || mName, name: wName,
-            x: wX * 2.5, y: wY * 2.5, 
-            width: Math.max(wW * 6, 90), height: Math.max(wH * 6, 90),
-            icon: 'tool', status: 'operational', detail: detail.replace(/"/g, '').trim()
+        if (!areasMap.has(areaId)) {
+          areasMap.set(areaId, {
+            id: areaId, areaId: areaId, areaName: areaName,
+            x: 50, y: 50, width: 800, height: 600,
+            lines: [{ id: lineId, lineId: lineId, lineName: lineName, x: 50, y: 50, width: 800, height: 600, workCenters: [] }],
+            buffers: [], storage: []
+          });
+        }
+
+        const area = areasMap.get(areaId);
+
+        area.lines[0].workCenters.push({
+            id: wId,
+            workCenterId: wId,
+            machineName: wName || mName,
+            name: wName,
+            ws_id: wId,
+            ws_name: wName,
+            ws_sequence: wSeq,
+            machine_id: parts[29] || '',
+            machine_name: mName || '',
+            wsSequence: wSeq,
+            x: wX * 2.5,
+            y: wY * 2.5, 
+            width: Math.max(wW * 6, 90),
+            height: Math.max(wH * 6, 90),
+            icon: 'tool',
+            status: 'operational',
+            detail: detail.replace(/"/g, '').trim()
         });
 
         if (fId && fFrom && fTo) {
@@ -73,31 +94,60 @@ export const parseCSV = (csvContent: string): Factory => {
         }
     }
 
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    wsDetails.forEach(w => {
-       if (w.x < minX) minX = w.x;
-       if (w.y < minY) minY = w.y;
-       if (w.x + w.width > maxX) maxX = w.x + w.width;
-       if (w.y + w.height > maxY) maxY = w.y + w.height;
+    const areas = Array.from(areasMap.values());
+    let globalMaxX = -Infinity, globalMaxY = -Infinity;
+
+    areas.forEach((area: any) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      area.lines[0].workCenters.forEach((w: any) => {
+        if (w.x < minX) minX = w.x;
+        if (w.y < minY) minY = w.y;
+        if (w.x + w.width > maxX) maxX = w.x + w.width;
+        if (w.y + w.height > maxY) maxY = w.y + w.height;
+      });
+
+      if (minX === Infinity) { minX = 100; maxX = 900; minY = 100; maxY = 700; }
+
+      area.x = minX - 100;
+      area.y = minY - 100;
+      area.width = (maxX - minX) + 200;
+      area.height = (maxY - minY) + 150;
+      area.lines[0].x = area.x;
+      area.lines[0].y = area.y;
+      area.lines[0].width = area.width;
+      area.lines[0].height = area.height;
+
+      if (area.x + area.width > globalMaxX) globalMaxX = area.x + area.width;
+      if (area.y + area.height > globalMaxY) globalMaxY = area.y + area.height;
     });
 
-    areaX = minX - 100;
-    areaY = minY - 100;
-    areaW = (maxX - minX) + 200;
-    areaH = (maxY - minY) + 150;
+    for (let i = 0; i < areas.length; i++) {
+      for (let j = 0; j < i; j++) {
+        const area = areas[i];
+        const other = areas[j];
+        const overlaps = (
+          area.x < other.x + other.width + 50 &&
+          area.x + area.width + 50 > other.x &&
+          area.y < other.y + other.height + 50 &&
+          area.y + area.height + 50 > other.y
+        );
+        if (overlaps) {
+          const dx = (other.x + other.width + 50) - area.x;
+          area.x += dx;
+          area.lines[0].x += dx;
+          area.lines[0].workCenters.forEach((w: any) => { w.x += dx; });
+        }
+      }
+    }
+
+    if (areas.length > 0) {
+      globalMaxX = Math.max(...areas.map((a: any) => a.x + a.width));
+      globalMaxY = Math.max(...areas.map((a: any) => a.y + a.height));
+    }
 
     return {
-      id: factoryId, name: factoryName, width: Math.max(2000, maxX + 500), height: Math.max(1500, maxY + 500), gridUnit: 50,
-      areas: [{
-        id: areaId, areaId: areaId, areaName: areaName,
-        x: areaX, y: areaY, width: areaW, height: areaH,
-        lines: [{
-          id: lineId, lineId: lineId, lineName: lineName,
-          x: areaX, y: areaY, width: areaW, height: areaH,
-          workCenters: wsDetails
-        }],
-        buffers: [], storage: []
-      }],
+      id: factoryId, name: factoryName, width: Math.max(2000, globalMaxX + 500), height: Math.max(1500, globalMaxY + 500), gridUnit: 50,
+      areas: areas,
       flows
     };
   }
