@@ -125,6 +125,7 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false, readOnly =
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number>(0);
+  const faviconImageRef = useRef<HTMLImageElement | null>(null);
 
   const [factory, setFactory] = useState(initialFactory || defaultFactory);
   const [showGrid, setShowGrid] = useState(true);
@@ -249,6 +250,12 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false, readOnly =
     return () => observer.disconnect();
   }, []);
 
+  // Load factory.png image for workstations
+  useEffect(() => {
+    // Emoji approach - no need to load external images
+    console.log('Using emoji 🏗️ for workstation display');
+  }, []);
+
   // Rendering — mirrors dashboard drawing style exactly
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -359,6 +366,8 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false, readOnly =
       // Area title
       ctx.fillStyle = isSelected ? '#bfdbfe' : '#94a3b8';
       ctx.font = `bold ${Math.max(10, 14 * zoom)}px Inter, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
       ctx.fillText(area.areaName, x + 14 * zoom, y + 29 * zoom);
 
       // Draw Flows (Escalators/Conveyors)
@@ -553,34 +562,30 @@ export function GridEditor({ onSave, initialFactory, isAdmin = false, readOnly =
             else if (statusVal === 'down') statusColor = '#f43f5e'; // Down
             else if (statusVal === 'critical') statusColor = '#ef4444'; // Critical
 
-            // Machine box
+            // Machine box - draw workstation with emoji
+            // Draw background box
             ctx.fillStyle = isMachineHovered ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.8)';
+            roundRect(ctx, wx, wy, ww, wh, 6 * zoom);
+            ctx.fill();
+            
+            // Draw border
             ctx.strokeStyle = isMachineHovered ? '#38bdf8' : statusColor;
             ctx.lineWidth = isMachineHovered ? 2 : 1.5;
             roundRect(ctx, wx, wy, ww, wh, 6 * zoom);
-            ctx.fill();
-
-            roundRect(ctx, wx, wy, ww, wh, 6 * zoom);
             ctx.stroke();
+            
+            // Draw emoji in center area (scaled to box size)
+            const emojiSize = Math.max(16, Math.min(ww, wh) * 0.45);
+            ctx.font = `${emojiSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🏗️', wx + ww / 2, wy + wh / 2);
 
             // Status dot
             ctx.fillStyle = statusColor;
             ctx.beginPath();
             ctx.arc(wx + 10 * zoom, wy + 10 * zoom, 3.5 * zoom, 0, Math.PI * 2);
             ctx.fill();
-
-            // Center graphic text (W1, W2...)
-            if (wc.name) {
-              const text = wc.name.toUpperCase();
-              ctx.fillStyle = isMachineHovered ? '#bae6fd' : '#f8fafc'; // glowing text
-              const fontSize = Math.max(8, 32 * zoom);
-              ctx.font = `bold ${fontSize}px Inter, sans-serif`;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillText(text, wx + ww / 2, wy + wh / 2);
-              ctx.textAlign = 'left';
-              ctx.textBaseline = 'alphabetic';
-            }
 
             // Lower detail name
             if (zoom > 0.8) {
